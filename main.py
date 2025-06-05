@@ -1,162 +1,125 @@
 from flask import Flask, request, send_file
 import pandas as pd
+from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 import io
 
 app = Flask(__name__)
 
 @app.route("/generate-xlsx", methods=["POST"])
 def generate_xlsx():
-    """
-    Генерирует XLSX файл с кастомным форматированием на основе JSON данных.
-    """
-    try:
-        data = request.json.get("data", [])
-        if not data:
-            return "JSON 'data' field is missing or empty.", 400
-            
-        df = pd.DataFrame(data)
+    data = request.json.get("data", [])
+    df = pd.DataFrame(data)
 
-        # Убедимся, что все названия столбцов строковые для дальнейшей обработки
-        df.columns = [str(col) for col in df.columns]
+    column_order = [
+        "НАИМЕНОВАНИЕ", "АРТИКУЛ", "БАРКОД", "КОЛ-ВО", "V_Размер",
+        "ЦЕНА ПОСТАВКИ (KZT)", "РОЗНИЧНАЯ ЦЕНА (KZT)", "КАТЕГОРИЯ",
+        "БРЕНД", "ЕДИНИЦА ИЗМЕРЕНИЯ", "ПОСТАВЩИК", "V_Цвет",
+        "mark_code", "ЦЕНА В USD"
+    ]
+    df = df[[col for col in column_order if col in df.columns]]
 
-        output = io.BytesIO()
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Sheet1')
 
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False, sheet_name='Sheet1')
-            ws = writer.sheets['Sheet1']
+    output.seek(0)
+    wb = load_workbook(output)
+    ws = wb.active
 
-            # --- 1. ОПРЕДЕЛЕНИЕ СТИЛЕЙ ---
+    # Fonts
+    font_header_red = Font(name='Calibri', size=11, bold=True, color='FF0000')
+    font_header_black = Font(name='Calibri', size=11, bold=True)
+    font_gothic_9 = Font(name='Century Gothic', size=9)
+    font_calibri_10 = Font(name='Calibri', size=10)
+    font_calibri_11 = Font(name='Calibri', size=11)
+    font_arial_9 = Font(name='Arial', size=9)
+    font_times_9 = Font(name='Times New Roman', size=9)
 
-            # Шрифты
-            red_header_font = Font(name='Calibri', size=11, bold=True, color='FF0000')
-            black_header_font = Font(name='Calibri', size=11, bold=True, color='000000')
-            gothic_9_font = Font(name='Century Gothic', size=9)
-            calibri_10_font = Font(name='Calibri', size=10)
-            calibri_11_font = Font(name='Calibri', size=11)
-            arial_9_font = Font(name='Arial', size=9)
-            times_new_roman_9_font = Font(name='Times New Roman', size=9)
+    # Fills
+    fill_qty = PatternFill(start_color='00FF00', end_color='00FF00', fill_type='solid')
+    fill_barcode = PatternFill(start_color='CCFFCC', end_color='CCFFCC', fill_type='solid')
 
-            # Заливка
-            light_green_fill = PatternFill(start_color='CCFFCC', end_color='CCFFCC', fill_type='solid')
-            bright_green_fill = PatternFill(start_color='00FF00', end_color='00FF00', fill_type='solid')
+    # Borders
+    thin_border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
 
-            # Границы
-            dark_border = Border(
-                left=Side(style='thin'),
-                right=Side(style='thin'),
-                top=Side(style='thin'),
-                bottom=Side(style='thin')
-            )
-            
-            # Выравнивание
-            center_align = Alignment(horizontal='center', vertical='center')
-            left_align = Alignment(horizontal='left', vertical='center')
+    # Alignments
+    align_center = Alignment(horizontal='center', vertical='center')
+    align_right = Alignment(horizontal='right', vertical='center')
+    align_left = Alignment(horizontal='left', vertical='center')
 
+    # Apply header styles
+    for idx, cell in enumerate(ws[1], 1):
+        col_name = cell.value
+        if col_name in ["НАИМЕНОВАНИЕ", "АРТИКУЛ", "БАРКОД", "КОЛ-ВО", "ЦЕНА ПОСТАВКИ (KZT)", "РОЗНИЧНАЯ ЦЕНА (KZT)"]:
+            cell.font = font_header_red
+        else:
+            cell.font = font_header_black
+        cell.alignment = align_center
+        cell.border = thin_border
 
-            # --- 2. ФОРМАТИРОВАНИЕ ЗАГОЛОВКОВ ---
-            
-            headers_red = ['наименование', 'артикул', 'баркод', 'кол-во', 'цена поставки', 'розничная цена']
-            
-            # Проходим по ячейкам заголовка (первая строка)
-            for cell in ws[1]:
-                header_text = str(cell.value).lower()
-                
-                # Применяем красный или черный шрифт
-                if header_text in headers_red:
-                    cell.font = red_header_font
-                else:
-                    cell.font = black_header_font
-                
-                # Все заголовки - большими буквами
-                cell.value = str(cell.value).upper()
-                cell.alignment = center_align
+    headers = [cell.value for cell in ws[1]]
 
+    # Apply data styles
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row, max_col=len(headers)):
+        for cell in row:
+            header = ws.cell(row=1, column=cell.col_idx).value
+            if header == "НАИМЕНОВАНИЕ":
+                cell.font = font_gothic_9
+                cell.border = thin_border
+            elif header == "АРТИКУЛ":
+                cell.font = font_calibri_10
+            elif header == "БАРКОД":
+                cell.font = font_calibri_11
+                cell.fill = fill_barcode
+                cell.alignment = align_center
+            elif header == "КОЛ-ВО":
+                cell.font = font_gothic_9
+                cell.fill = fill_qty
+                cell.border = thin_border
+                cell.alignment = align_center
+            elif header == "V_Размер":
+                cell.font = font_calibri_11
+            elif header == "ЦЕНА ПОСТАВКИ (KZT)":
+                cell.font = font_arial_9
+                cell.number_format = "0.00"
+                cell.alignment = align_right
+            elif header == "РОЗНИЧНАЯ ЦЕНА (KZT)":
+                cell.font = font_calibri_11
+                cell.number_format = "0.00"
+                cell.alignment = align_right
+            elif header == "КАТЕГОРИЯ":
+                cell.font = font_calibri_11
+            elif header in ["БРЕНД", "ЕДИНИЦА ИЗМЕРЕНИЯ", "ПОСТАВЩИК"]:
+                cell.font = font_calibri_11
+            elif header == "V_Цвет":
+                cell.font = font_gothic_9
+                cell.border = thin_border
+            elif header == "mark_code":
+                cell.font = font_calibri_11
+            elif header == "ЦЕНА В USD":
+                cell.font = font_times_9
+                cell.border = thin_border
+                cell.number_format = "0.00"
+                cell.alignment = align_right
 
-            # --- 3. ФОРМАТИРОВАНИЕ ДАННЫХ ---
-            
-            # Получаем список заголовков уже после их преобразования в верхний регистр
-            headers = [str(cell.value).lower() for cell in ws[1]]
+    # Auto-fit column width
+    for col in ws.columns:
+        max_length = 0
+        col_letter = get_column_letter(col[0].column)
+        for cell in col:
+            if cell.value:
+                max_length = max(max_length, len(str(cell.value)))
+        ws.column_dimensions[col_letter].width = max_length + 2
 
-            # Проходим по всем строкам с данными
-            for row in ws.iter_rows(min_row=2, max_row=ws.max_row, max_col=len(headers)):
-                for cell in row:
-                    # Определяем название столбца для текущей ячейки
-                    col_header = headers[cell.col_idx - 1]
+    final_output = io.BytesIO()
+    wb.save(final_output)
+    final_output.seek(0)
 
-                    # Применяем стили в зависимости от столбца
-                    if col_header == 'наименование':
-                        cell.font = gothic_9_font
-                        cell.border = dark_border
-                        cell.alignment = left_align
-                    
-                    elif col_header == 'артикул':
-                        cell.font = calibri_10_font
-                        # нет темных границ
-                        cell.alignment = left_align
-
-                    elif col_header == 'баркод':
-                        cell.font = calibri_11_font
-                        cell.fill = light_green_fill
-                        cell.alignment = center_align
-
-                    elif col_header == 'кол-во':
-                        cell.font = gothic_9_font
-                        cell.fill = bright_green_fill
-                        cell.border = dark_border
-                        cell.alignment = center_align
-
-                    elif col_header == 'v_размер':
-                        cell.font = calibri_11_font
-                        cell.alignment = left_align
-
-                    elif col_header == 'цена поставки':
-                        cell.font = arial_9_font
-                        cell.alignment = left_align
-                        cell.number_format = "0.00"
-
-                    elif col_header == 'розничная цена':
-                        cell.font = calibri_11_font
-                        cell.alignment = left_align
-                        cell.number_format = "0.00"
-
-                    elif col_header in ['категория', 'бренд', 'единицы измерения', 'поставщик']:
-                        cell.font = calibri_11_font
-                        cell.alignment = left_align
-
-                    elif col_header == 'v_цвет':
-                        cell.font = gothic_9_font
-                        cell.border = dark_border
-                        cell.alignment = left_align
-
-                    elif col_header == 'mark_code':
-                        cell.font = calibri_11_font
-                        cell.alignment = left_align
-                        
-                    elif col_header == 'цена usd':
-                        cell.font = times_new_roman_9_font
-                        cell.border = dark_border
-                        cell.alignment = left_align
-                        cell.number_format = "0.00"
-
-                    else:
-                        # Стиль по умолчанию для столбцов, которые не были описаны
-                        cell.font = calibri_11_font
-                        cell.alignment = left_align
-        
-        output.seek(0)
-        return send_file(
-            output,
-            download_name="formatted_table.xlsx",
-            as_attachment=True,
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        )
-
-    except Exception as e:
-        return str(e), 500
-
-
-if __name__ == "__main__":
-    # Для запуска этого сервера нужны Flask и pandas:
-    # pip install Flask pandas openpyxl
-    app.run(host="0.0.0.0", port=10000)
+    return send_file(final_output, download_name="formatted.xlsx", as_attachment=True)
